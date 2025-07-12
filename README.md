@@ -28,6 +28,7 @@ A lightweight GUI-based network scanning tool built in Python. It scans a subnet
 ## 🛠 Requirements
 
 Install the following Python packages:
+
 pip install pysnmp
 
 You also need Python 3.6+.
