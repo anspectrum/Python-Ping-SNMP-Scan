@@ -38,8 +38,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS snmp_hosts (
             ip TEXT PRIMARY KEY,
             sysname TEXT,
-            community TEXT,
-            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            community TEXT
         )
     ''')
     conn.commit()
@@ -60,9 +59,9 @@ def save_scan_results(subnet, alive_hosts, snmp_devices, community):
 
     for device in snmp_devices:
         cur.execute('''
-            INSERT OR REPLACE INTO snmp_hosts (ip, sysname, community, last_updated)
-            VALUES (?, ?, ?, ?)
-        ''', (device['ip'], device['sysName'], community, datetime.now()))
+            INSERT OR REPLACE INTO snmp_hosts (ip, sysname, community)
+            VALUES (?, ?, ?)
+        ''', (device['ip'], device['sysName'], community))
 
     conn.commit()
     conn.close()
@@ -165,11 +164,14 @@ class NetworkScannerGUI:
         self.scan_button = ttk.Button(root, text="Start Scan", command=self.start_scan)
         self.scan_button.grid(row=2, column=0, pady=10)
 
-        self.export_button = ttk.Button(root, text="Export SNMP to CSV", command=self.export_to_csv)
+        self.export_button = ttk.Button(root, text="Export Subnet to CSV", command=self.export_to_csv)
         self.export_button.grid(row=2, column=1, pady=10)
         
         self.delete_button = ttk.Button(root, text="Delete Selected Subnet", command=self.delete_selected_subnet)
         self.delete_button.grid(row=2, column=2, pady=10)
+        
+        self.export_all_button = ttk.Button(root, text="Export All Subnets to CSV", command=self.export_all_to_csv)
+        self.export_all_button.grid(row=4, column=0, columnspan=3, pady=5)
 
         self.output_box = scrolledtext.ScrolledText(root, width=80, height=25)
         self.output_box.grid(row=3, column=0, columnspan=3, padx=10, pady=10)
@@ -232,72 +234,103 @@ class NetworkScannerGUI:
             self.log("[!] No SNMP devices previously detected.")
 
     def delete_selected_subnet(self):
-       selected_subnet = self.subnet_dropdown.get()
-       if not selected_subnet:
-           messagebox.showwarning("No Subnet Selected", "Please select a subnet to delete.")
-           return
-    
-       confirm = messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete data for subnet {selected_subnet}?")
-       if not confirm:
-           return
-    
-       conn = sqlite3.connect(DB_NAME)
-       cur = conn.cursor()
-    
-       # Delete related data
-       cur.execute("DELETE FROM snmp_hosts WHERE ip IN (SELECT ip FROM alive_hosts WHERE subnet = ?)", (selected_subnet,))
-       cur.execute("DELETE FROM alive_hosts WHERE subnet = ?", (selected_subnet,))
-       cur.execute("DELETE FROM subnets WHERE subnet = ?", (selected_subnet,))
-       conn.commit()
-       conn.close()
-    
-       self.subnet_dropdown['values'] = get_scanned_subnets()
-       self.subnet_dropdown.set('')
-       self.output_box.delete(1.0, tk.END)
-       self.log(f"[✓] Deleted records for subnet: {selected_subnet}")
-       
-       
+        selected_subnet = self.subnet_dropdown.get()
+        if not selected_subnet:
+            messagebox.showwarning("No Subnet Selected", "Please select a subnet to delete.")
+            return
+
+        confirm = messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete data for subnet {selected_subnet}?")
+        if not confirm:
+            return
+
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+
+        cur.execute("DELETE FROM snmp_hosts WHERE ip IN (SELECT ip FROM alive_hosts WHERE subnet = ?)", (selected_subnet,))
+        cur.execute("DELETE FROM alive_hosts WHERE subnet = ?", (selected_subnet,))
+        cur.execute("DELETE FROM subnets WHERE subnet = ?", (selected_subnet,))
+        conn.commit()
+        conn.close()
+
+        self.subnet_dropdown['values'] = get_scanned_subnets()
+        self.subnet_dropdown.set('')
+        self.output_box.delete(1.0, tk.END)
+        self.log(f"[✓] Deleted records for subnet: {selected_subnet}")
+
     def export_to_csv(self):
         selected_subnet = self.subnet_dropdown.get()
         if not selected_subnet:
             messagebox.showwarning("No Subnet Selected", "Please select a subnet to export.")
             return
-    
+
         conn = sqlite3.connect(DB_NAME)
         cur = conn.cursor()
-    
-        # Fetch SNMP results for the selected subnet
-        cur.execute("""
-            SELECT ip, sysname, community, last_updated 
-            FROM snmp_hosts 
-            WHERE ip IN (SELECT ip FROM alive_hosts WHERE subnet = ?)
-        """, (selected_subnet,))
-        rows = cur.fetchall()
-        conn.close()
-    
-        if not rows:
-            messagebox.showinfo("No Data", f"No SNMP data found for subnet {selected_subnet}.")
+
+        cur.execute("SELECT ip, last_seen FROM alive_hosts WHERE subnet = ?", (selected_subnet,))
+        alive_hosts = cur.fetchall()
+
+        if not alive_hosts:
+            messagebox.showinfo("No Data", f"No alive hosts found for subnet {selected_subnet}.")
+            conn.close()
             return
-    
-        # Ask user where to save the CSV
+
+        cur.execute("SELECT ip, sysname, community FROM snmp_hosts")
+        snmp_data = {row[0]: row[1:] for row in cur.fetchall()}
+        conn.close()
+
         file_path = filedialog.asksaveasfilename(
             defaultextension=".csv",
             filetypes=[("CSV files", "*.csv")],
-            title="Save SNMP Data As..."
+            title="Save Subnet Host Data As..."
         )
         if not file_path:
-            return  # User canceled
-    
-        # Write to CSV
+            return
+
         with open(file_path, mode='w', newline='', encoding='utf-8') as file:
             writer = csv.writer(file)
-            writer.writerow(["ip", "sysname", "community", "last_updated"])  # header
-            writer.writerows(rows)
-    
-        messagebox.showinfo("Export Successful", f"Exported {len(rows)} entries to:\n{file_path}")
-        self.log(f"[✓] Exported SNMP data for {selected_subnet} to CSV.")
-    
-    
+            writer.writerow(["ip", "sysname", "community", "last_seen"])  # header
+
+            for ip, last_seen in alive_hosts:
+                sysname, community = snmp_data.get(ip, ("", ""))
+                writer.writerow([ip, sysname, community, last_seen])
+
+        messagebox.showinfo("Export Successful", f"Exported {len(alive_hosts)} entries to:\n{file_path}")
+        self.log(f"[✓] Exported alive + SNMP data for {selected_subnet} to CSV.")
+
+    def export_all_to_csv(self):
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+
+        cur.execute("SELECT ip, subnet, last_seen FROM alive_hosts")
+        alive_hosts = cur.fetchall()
+
+        if not alive_hosts:
+            messagebox.showinfo("No Data", "No alive hosts found in the database.")
+            conn.close()
+            return
+
+        cur.execute("SELECT ip, sysname, community FROM snmp_hosts")
+        snmp_data = {row[0]: row[1:] for row in cur.fetchall()}
+        conn.close()
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv")],
+            title="Save All Subnet Data As..."
+        )
+        if not file_path:
+            return
+
+        with open(file_path, mode='w', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            writer.writerow(["ip", "sysname", "community", "last_seen", "subnet"])
+
+            for ip, subnet, last_seen in alive_hosts:
+                sysname, community = snmp_data.get(ip, ("", ""))
+                writer.writerow([ip, sysname, community, last_seen, subnet])
+
+        messagebox.showinfo("Export Successful", f"Exported {len(alive_hosts)} total entries to:\n{file_path}")
+        self.log(f"[✓] Exported all subnets to CSV.")
 
 # ----------------------------
 # Main
