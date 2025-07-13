@@ -40,11 +40,12 @@ You also need Python 3.6+.
     Clone this repo
 
 git clone https://github.com/yourusername/network-crawler.git
+
 cd network-crawler
 
 Run the script
 
-    python network_crawler.py
+    python net-craw-sql.py
 
     Usage via GUI
 
