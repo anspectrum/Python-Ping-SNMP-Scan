@@ -39,9 +39,9 @@ You also need Python 3.6+.
 
     Clone this repo
 
-git clone https://github.com/yourusername/network-crawler.git
+git clone https://github.com/anspectrum/Python-Ping-SNMP-Scan.git
 
-cd network-crawler
+cd Python-Ping-SNMP-Scan
 
 Run the script
 
@@ -59,7 +59,7 @@ Run the script
 
 ## 📁 Files
 
-    network_crawler.py: Main application
+    Python-Ping-SNMP-Scan.py: Main application
 
     network_scan.db: SQLite database (created at runtime)
 
